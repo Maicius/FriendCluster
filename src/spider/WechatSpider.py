@@ -8,7 +8,7 @@ import xml.dom.minidom
 import json
 import urllib
 import threading
-
+from urllib import parse
 class WechatSpider(object):
     tip = 0
     uuid = ''
@@ -196,16 +196,49 @@ class WechatSpider(object):
         state = self.responseState('webwxinit', dic['BaseResponse'])
         return state
 
+    def get_contact_url(self):
+        base_url = base_uri + '/webwxgetcontact?'
+        params = {
+            "pass_ticket": self.pass_ticket,
+            "skey": self.skey,
+            "r": int(time.time())
+        }
+        url = base_url + parse.urlencode(params)
+        return url
+
+    def get_group_url(self):
+        base_url = base_uri + '/webwxbatchgetcontact?'
+        params = {
+            "type": "ex",
+            "pass_ticket": self.pass_ticket,
+            "skey": self.skey,
+            "r": int(time.time()),
+            "lang": 'zh_CN'
+        }
+        url = base_url + parse.urlencode(params)
+        return url
+
+
     def webwxgetcontact(self):
-        url = (base_uri + '/webwxgetcontact?pass_ticket=%s&skey=%s&r=%s' % (pass_ticket, skey, int(time.time())))
-        headers = {'content-type': 'application/json; charset=UTF-8'}
-        r = self.req.post(url=url, headers=headers)
-        r.encoding = 'utf-8'
-        data = r.json()
+        # url = (base_uri + '/webwxgetcontact?pass_ticket=%s&skey=%s&r=%s' % (pass_ticket, skey, int(time.time())))
+        user_url = self.get_contact_url()
+        headers = {
+            'content-type': 'application/json; charset=UTF-8',
+        }
+        r1 = self.req.post(url=user_url, headers=headers)
+        r1.encoding = 'utf-8'
+        print("get memeber list")
+        url = self.get_group_url()
+
+
+
+        data = r1.json()
         if self.DEBUG:
             f = open(os.path.join(os.getcwd(), '../resource/webwxgetcontact.json'), 'wb')
-            f.write(r.content)
+            f.write(r1.content)
             f.close()
+
+
         dic = data
         MemberList = dic['MemberList']
 
@@ -225,11 +258,27 @@ class WechatSpider(object):
                 MemberList.remove(Member)
             elif Member['UserName'].find('@@') != -1:  # 群
                 MemberList.remove(Member)
+                self.group_list.append(Member)
             elif Member['UserName'] == My['UserName']:  # 自己
                 MemberList.remove(Member)
 
-
         return MemberList
+
+    def create_bacth_query_data(self):
+        group_list = list(map(lambda x: {"EncryChatRoomId": '', "UserName": x['UserName']}, self.group_list))
+        params = {'BaseRequest': BaseRequest, 'Count': len(group_list), 'List': group_list}
+        print(params)
+        return json.dumps(params)
+
+    def getwxbatchcontact(self):
+        r2 = self.req.post(url=self.get_group_url(), data=self.create_bacth_query_data())
+        r2.encoding = 'utf-8'
+        data2 = r2.json()
+        if self.DEBUG:
+            f2 = open(os.path.join(os.getcwd(), '../resource/webwxbatchgetcontact.json'), 'wb')
+            f2.write(r2.content)
+            f2.close()
+        print(data2)
 
     def syncKey(self):
         SyncKeyItems = ['%s_%s' % (item['Key'], item['Val'])
@@ -268,7 +317,6 @@ class WechatSpider(object):
         r = self.req.post(url=url, data=json.dumps(params))
         r.encoding = 'utf-8'
         data = r.json()
-        # print(data)
 
         dic = data
         SyncKey = dic['SyncKey']
@@ -301,6 +349,7 @@ class WechatSpider(object):
             print('初始化失败')
             return
         self.MemberList = self.webwxgetcontact()
+        self.getwxbatchcontact()
         threading.Thread(target=self.heartBeatLoop)
         MemberCount = len(self.MemberList)
         print('通讯录共%s位好友' % MemberCount)
